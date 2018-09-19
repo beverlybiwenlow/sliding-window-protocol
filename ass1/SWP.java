@@ -135,6 +135,7 @@ public void send_frame(int frame_kind, int frame_num, int frame_expected, Packet
         Packet in_buffer[] = new Packet[NR_BUFS];
         boolean arrived[] = new boolean[NR_BUFS];
 
+        // initializing the arrived array
         for (int i = 0; i < NR_BUFS; i++){
           arrived[i] = false;
         }
@@ -160,8 +161,11 @@ public void send_frame(int frame_kind, int frame_num, int frame_expected, Packet
                   send_frame(PFrame.NAK, 0, frame_expected, out_buf);
                 }
                 else{
+                  // start waiting for an ack
                   start_ack_timer();
                 }
+
+                // if frame sequence is in window and has not arrived before, set arrived as true & put payload into buffer
                 if(between(frame_expected, frame.seq, too_far) && (arrived[frame.seq % NR_BUFS] == false)){
                   arrived[frame.seq % NR_BUFS] = true;
                   in_buf[frame.seq % NR_BUFS] = frame.info;
