@@ -11,6 +11,8 @@
  *          Singapore 639798                                     *
  *===============================================================*/
 
+import java.util.Timer;
+import java.util.TimerTask;
 
 public class SWP {
 
@@ -84,8 +86,6 @@ public class SWP {
 
  // Added variables
  boolean no_nak = true;
- Timer[] f_timer = new Timer[NR_BUFS];
- Timer ack_timer;
 
  // Added methods
 
@@ -108,7 +108,7 @@ public void send_frame(int frame_kind, int frame_num, int frame_expected, Packet
 
   // if data frame, enter buffer into payload
   if (frame.kind == PFrame.DATA){
-    frame.info = buffer[frame_num % NF_BUFS];
+    frame.info = buffer[frame_num % NR_BUFS];
   }
   frame.seq = frame_num;
   frame.ack = (frame_expected + MAX_SEQ) % (MAX_SEQ + 1);
@@ -168,9 +168,9 @@ public void send_frame(int frame_kind, int frame_num, int frame_expected, Packet
                 // if frame sequence is in window and has not arrived before, set arrived as true & put payload into buffer
                 if(between(frame_expected, frame.seq, too_far) && (arrived[frame.seq % NR_BUFS] == false)){
                   arrived[frame.seq % NR_BUFS] = true;
-                  in_buf[frame.seq % NR_BUFS] = frame.info;
+                  in_buffer[frame.seq % NR_BUFS] = frame.info;
                   while(arrived[frame_expected % NR_BUFS]){
-                    to_network_layer(in_buf[frame_expected % NR_BUFS]);
+                    to_network_layer(in_buffer[frame_expected % NR_BUFS]);
                     no_nak = true;
                     arrived[frame_expected % NR_BUFS] = false;
                     frame_expected = inc(frame_expected);
@@ -216,21 +216,79 @@ public void send_frame(int frame_kind, int frame_num, int frame_expected, Packet
     of the frame associated with this timer, 
    */
  
+  Timer[] f_timer = new Timer[NR_BUFS];
+  Timer ack_timer;
+
+
+  public class FrameTimeoutTask extends TimerTask {
+    int seq;
+
+    public FrameTimeoutTask(int seq) {
+        this.seq = seq;
+    }
+
+    public void run() {
+        swe.generate_timeout_event(seq);
+    }
+  }
+
+
    private void start_timer(int seq) {
-     
+    stop_timer(seq);
+    //create new timer and new timertask
+    f_timer[seq % NR_BUFS] = new Timer();
+    //schedule the  task for execution after 200ms
+    f_timer[seq % NR_BUFS].schedule(new f_task(seq), 200);
    }
 
    private void stop_timer(int seq) {
-
+    if (f_timer[seq % NR_BUFS] != null) {
+      f_timer[seq % NR_BUFS].cancel();
+      f_timer[seq % NR_BUFS] = null;
+    }
    }
 
+
    private void start_ack_timer( ) {
-      
+    stop_ack_timer();
+
+        //starts another timer for sending separate ack
+        ack_timer = new Timer();
+        ack_timer.schedule(new ack_task(), 50);
    }
 
    private void stop_ack_timer() {
-     
+    if (ack_timer != null) {
+      ack_timer.cancel();
+      ack_timer = null;
+    }
    }
+
+   class ack_task extends TimerTask {
+
+    public void run() {
+        //stop timer
+        stop_ack_timer();
+        swe.generate_acktimeout_event();
+    }
+}
+
+
+class f_task extends TimerTask {
+
+  private int seq;
+
+  public f_task(int seq) {
+      this.seq = seq;
+  }
+
+  public void run() {
+      //stops this timer, discarding any scheduled tasks for the current seq
+      stop_timer(seq);
+      swe.generate_timeout_event(seq);
+  }
+}
+
 
 }//End of class
 
