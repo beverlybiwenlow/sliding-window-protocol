@@ -94,54 +94,47 @@ public class SWP {
   return ((next_frame_to_send + 1) % (MAX_SEQ + 1));
 }
 
-// checks if a frame number is within the window
 public boolean between(int frame_expected, int frame_seq, int too_far){
   return ((frame_expected <= frame_seq)&&(frame_seq < too_far)) 
       || ((too_far < frame_expected)&&(frame_expected<=frame_seq)) 
       || ((frame_seq<too_far)&&(too_far<frame_expected));
 }
 
-// sends a frame
-public void send_frame(int frame_kind, int frame_num, int frame_expected, Packet[] buffer){
+public void send_frame(int frame_kind, int frame_nr, int frame_expected, Packet[] buffer) {
   PFrame frame = new PFrame();
   frame.kind = frame_kind;
-
-  // if data frame, enter buffer into payload
   if (frame.kind == PFrame.DATA){
-    frame.info = buffer[frame_num % NR_BUFS];
+    frame.info = buffer[frame_nr % NR_BUFS];
   }
-  frame.seq = frame_num;
+  frame.seq = frame_nr;
   frame.ack = (frame_expected + MAX_SEQ) % (MAX_SEQ + 1);
-
-  if (frame_kind == PFrame.NAK){
+  if (frame.kind == PFrame.NAK){
     no_nak = false;
   }
   to_physical_layer(frame);
-
-  // if data frame, start timer
   if (frame.kind == PFrame.DATA){
-    start_timer(frame_num % MAX_SEQ);
+    start_timer(frame_nr);
   }
   stop_ack_timer();
-
 }
 
    public void protocol6() {
+        init();
+
         int ack_expected = 0;
         int next_frame_to_send = 0;
         int frame_expected = 0;
         int too_far = NR_BUFS;
         PFrame frame = new PFrame();
-        Packet in_buffer[] = new Packet[NR_BUFS];
+        Packet in_buf[] = new Packet[NR_BUFS];
         boolean arrived[] = new boolean[NR_BUFS];
+
+        enable_network_layer(NR_BUFS);
 
         // initializing the arrived array
         for (int i = 0; i < NR_BUFS; i++){
           arrived[i] = false;
         }
-
-        init();
-        enable_network_layer(NR_BUFS);
 
         while(true) {
           wait_for_event(event);
@@ -149,7 +142,7 @@ public void send_frame(int frame_kind, int frame_num, int frame_expected, Packet
             case (PEvent.NETWORK_LAYER_READY):
               from_network_layer(out_buf[next_frame_to_send % NR_BUFS]);
               send_frame(PFrame.DATA, next_frame_to_send, frame_expected, out_buf);
-              inc(next_frame_to_send);
+              next_frame_to_send = inc(next_frame_to_send);
               break; 
 
             case (PEvent.FRAME_ARRIVAL):
@@ -168,9 +161,9 @@ public void send_frame(int frame_kind, int frame_num, int frame_expected, Packet
                 // if frame sequence is in window and has not arrived before, set arrived as true & put payload into buffer
                 if(between(frame_expected, frame.seq, too_far) && (arrived[frame.seq % NR_BUFS] == false)){
                   arrived[frame.seq % NR_BUFS] = true;
-                  in_buffer[frame.seq % NR_BUFS] = frame.info;
+                  in_buf[frame.seq % NR_BUFS] = frame.info;
                   while(arrived[frame_expected % NR_BUFS]){
-                    to_network_layer(in_buffer[frame_expected % NR_BUFS]);
+                    to_network_layer(in_buf[frame_expected % NR_BUFS]);
                     no_nak = true;
                     arrived[frame_expected % NR_BUFS] = false;
                     frame_expected = inc(frame_expected);
@@ -185,6 +178,7 @@ public void send_frame(int frame_kind, int frame_num, int frame_expected, Packet
               while(between(ack_expected, frame.ack, next_frame_to_send)){
                 stop_timer(ack_expected % NR_BUFS);
                 ack_expected = inc(ack_expected);
+                enable_network_layer(1);
               }
               break;	   
 
