@@ -11,6 +11,7 @@
  *          Singapore 639798                                     *
  *===============================================================*/
 
+
 public class SWP {
 
 /*========================================================================*
@@ -81,30 +82,122 @@ public class SWP {
  	implement your Protocol Variables and Methods below: 
  *==========================================================================*/
 
+ // Added variables
+ boolean no_nak = true;
+ Timer[] f_timer = new Timer[NR_BUFS];
+ Timer ack_timer;
+
+ // Added methods
+
+ // increments frame number to the next (bounded by MAX_SEQ)
+ public int inc(int next_frame_to_send) {
+  return ((next_frame_to_send + 1) % (MAX_SEQ + 1));
+}
+
+// checks if a frame number is within the window
+public boolean between(int frame_expected, int frame_seq, int too_far){
+  return ((frame_expected <= frame_seq)&&(frame_seq < too_far)) 
+      || ((too_far < frame_expected)&&(frame_expected<=frame_seq)) 
+      || ((frame_seq<too_far)&&(too_far<frame_expected));
+}
+
+// sends a frame
+public void send_frame(int frame_kind, int frame_num, int frame_expected, Packet[] buffer){
+  PFrame frame = new PFrame();
+  frame.kind = frame_kind;
+
+  // if data frame, enter buffer into payload
+  if (frame.kind == PFrame.DATA){
+    frame.info = buffer[frame_num % NF_BUFS];
+  }
+  frame.seq = frame_num;
+  frame.ack = (frame_expected + MAX_SEQ) % (MAX_SEQ + 1);
+
+  if (frame_kind == PFrame.NAK){
+    no_nak = false;
+  }
+  to_physical_layer(frame);
+
+  // if data frame, start timer
+  if (frame.kind == PFrame.DATA){
+    start_timer(frame_num % MAX_SEQ);
+  }
+  stop_ack_timer();
+
+}
+
    public void protocol6() {
-        seq_nr ack_expected;
+        int ack_expected = 0;
+        int next_frame_to_send = 0;
+        int frame_expected = 0;
+        int too_far = NR_BUFS;
+        PFrame frame = new PFrame();
+        Packet in_buffer[] = new Packet[NR_BUFS];
+        boolean arrived[] = new boolean[NR_BUFS];
+
+        for (int i = 0; i < NR_BUFS; i++){
+          arrived[i] = false;
+        }
+
         init();
         enable_network_layer(NR_BUFS);
-        System.out.print("TEST");
-	      while(true) {
-          System.out.print("hi");
+
+        while(true) {
           wait_for_event(event);
 	        switch(event.type) {
-	          case (PEvent.NETWORK_LAYER_READY):
-              System.out.println("1");
+            case (PEvent.NETWORK_LAYER_READY):
+              from_network_layer(out_buf[next_frame_to_send % NR_BUFS]);
+              send_frame(PFrame.DATA, next_frame_to_send, frame_expected, out_buf);
+              inc(next_frame_to_send);
               break; 
-	          case (PEvent.FRAME_ARRIVAL ):
-              System.out.println("2");
+
+            case (PEvent.FRAME_ARRIVAL):
+              from_physical_layer(frame);
+              if(frame.kind == PFrame.DATA){
+
+                // if frame is not expected and no NAKs exist yet
+                if((frame.seq != frame_expected) && no_nak){
+                  send_frame(PFrame.NAK, 0, frame_expected, out_buf);
+                }
+                else{
+                  start_ack_timer();
+                }
+                if(between(frame_expected, frame.seq, too_far) && (arrived[frame.seq % NR_BUFS] == false)){
+                  arrived[frame.seq % NR_BUFS] = true;
+                  in_buf[frame.seq % NR_BUFS] = frame.info;
+                  while(arrived[frame_expected % NR_BUFS]){
+                    to_network_layer(in_buf[frame_expected % NR_BUFS]);
+                    no_nak = true;
+                    arrived[frame_expected % NR_BUFS] = false;
+                    frame_expected = inc(frame_expected);
+                    too_far = inc(too_far);
+                    start_ack_timer();
+                  }
+                }
+              }
+              if((frame.kind == PFrame.NAK) && between(ack_expected, (frame.ack + 1) % (MAX_SEQ + 1), next_frame_to_send)){
+                send_frame(PFrame.DATA, (frame.ack + 1) % (MAX_SEQ + 1), frame_expected, out_buf);
+              }
+              while(between(ack_expected, frame.ack, next_frame_to_send)){
+                stop_timer(ack_expected % NR_BUFS);
+                ack_expected = inc(ack_expected);
+              }
               break;	   
+
             case (PEvent.CKSUM_ERR):
-              System.out.println("3");     
+              if(no_nak){
+                send_frame(PFrame.NAK, 0, frame_expected, out_buf);
+              }
               break;  
+
             case (PEvent.TIMEOUT): 
-              System.out.println("4");
+              send_frame(PFrame.DATA, oldest_frame, frame_expected, out_buf);
               break; 
+
 	          case (PEvent.ACK_TIMEOUT): 
-              System.out.println("5");
+              send_frame(PFrame.ACK, 0, frame_expected, out_buf);
               break; 
+
             default: 
 		          System.out.println("SWP: undefined event type = " 
                                        + event.type); 
